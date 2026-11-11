@@ -1,6 +1,8 @@
 // Minimal repro: useAgUiRuntime + an in-memory AG-UI agent that streams text deltas.
-// Counts React commits of a component subscribed to the thread messages.
-// Query params: ?deltas=2000&burst=20&gapMs=1
+// Counts renders of the component that calls useAgUiRuntime (hostRenders) and commits of a
+// component subscribed to the thread messages (commits).
+// Query params: ?deltas=2000&burst=20&gapMs=1&stable=1
+// stable=1 passes the thread tree as a stable element, so it does not re-render with the host.
 import { useLayoutEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Observable } from 'rxjs'
@@ -13,7 +15,9 @@ const DELTAS = Number(params.get('deltas') ?? 2000)
 const BURST = Number(params.get('burst') ?? 20)
 const GAP_MS = Number(params.get('gapMs') ?? 1)
 
-const stats = { deltas: 0, commits: 0, startedAt: 0, seconds: null, done: false, error: null }
+const STABLE = params.get('stable') === '1'
+
+const stats = { deltas: 0, hostRenders: 0, commits: 0, startedAt: 0, seconds: null, done: false, error: null }
 window.__stats = stats
 
 // Emits RUN_STARTED, TEXT_MESSAGE_START, DELTAS x TEXT_MESSAGE_CONTENT (BURST at a time,
@@ -74,20 +78,25 @@ function Message() {
 }
 const MESSAGE_COMPONENTS = { Message }
 
+function ThreadView() {
+  return (
+    <ThreadPrimitive.Root>
+      <MessageList />
+    </ThreadPrimitive.Root>
+  )
+}
+const STABLE_THREAD_VIEW = <ThreadView />
+
 function App() {
   const runtime = useAgUiRuntime({ agent })
+  stats.hostRenders += 1
   window.__stream = () => {
+    stats.hostRenders = 0
     stats.commits = 0
     stats.startedAt = performance.now()
     runtime.thread.append({ role: 'user', content: [{ type: 'text', text: 'stream' }] })
   }
-  return (
-    <AssistantRuntimeProvider runtime={runtime}>
-      <ThreadPrimitive.Root>
-        <MessageList />
-      </ThreadPrimitive.Root>
-    </AssistantRuntimeProvider>
-  )
+  return <AssistantRuntimeProvider runtime={runtime}>{STABLE ? STABLE_THREAD_VIEW : <ThreadView />}</AssistantRuntimeProvider>
 }
 
 createRoot(document.getElementById('root'), {
@@ -101,7 +110,14 @@ document.getElementById('stream').addEventListener('click', () => window.__strea
 // Stats are written to the DOM directly, outside React, so they do not add commits.
 setInterval(() => {
   document.getElementById('stats').textContent = JSON.stringify(
-    { deltas: stats.deltas, commits: stats.commits, seconds: stats.seconds, done: stats.done, error: stats.error },
+    {
+      deltas: stats.deltas,
+      hostRenders: stats.hostRenders,
+      commits: stats.commits,
+      seconds: stats.seconds,
+      done: stats.done,
+      error: stats.error,
+    },
     null,
     2,
   )
